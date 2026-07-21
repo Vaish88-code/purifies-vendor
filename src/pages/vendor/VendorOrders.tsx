@@ -7,29 +7,30 @@ import {
   User,
   CreditCard,
   Calendar,
-  UserPlus,
-  Navigation,
   Search,
   CheckCircle,
+  Send,
 } from 'lucide-react';
 import { Button } from '@shared/components/ui/button';
 import { Input } from '@shared/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@shared/components/ui/card';
 import { VendorLayout } from '@/components/layouts/VendorLayout';
-import { DriverAssignmentDialog } from '@/components/vendor/DriverAssignmentDialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@shared/components/ui/tabs';
 import { useToast } from '@shared/hooks/use-toast';
 import { isQuickOrder } from '@shared/utils/orderFilters';
 import { useAuth } from '@shared/contexts/AuthContext';
-import { subscribeToOrdersByVendor, updateOrderDocument, getVendorByUid, subscribeToDeliveryPersonsForVendorArea, updateVendorDocument, subscribeToPaymentsByVendor, updatePaymentDocument } from '@shared/lib/firebase/firestore';
-import { Order, Vendor, FirestoreUser, Payment } from '@shared/lib/firebase/firestore';
-import { formatDistanceToNow } from 'date-fns';
 import {
-  cityKeyForMatching,
-  deriveCityTokenFromAddress,
-  distanceMetersShopToPerson,
-  formatKmNumber,
-} from '@shared/utils/geo';
+  subscribeToOrdersByVendor,
+  getVendorByUid,
+  updateVendorDocument,
+  updateOrderDocument,
+  subscribeToPaymentsByVendor,
+  updatePaymentDocument,
+  requestDeliveryFromAdmin,
+} from '@shared/lib/firebase/firestore';
+import { Order, Vendor, Payment } from '@shared/lib/firebase/firestore';
+import { countJarsInOrder } from '@shared/utils/platformFees';
+import { formatDistanceToNow } from 'date-fns';
 import { Truck } from 'lucide-react';
 import { getOrderDisplayStatus } from '@shared/utils/orderStatus';
 
@@ -55,10 +56,6 @@ export default function VendorOrders() {
   const [loading, setLoading] = useState(true);
   const [vendor, setVendor] = useState<Vendor | null>(null);
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
-  const [deliveryPersons, setDeliveryPersons] = useState<FirestoreUser[]>([]);
-  const [loadingDeliveryPersons, setLoadingDeliveryPersons] = useState(false);
-  const [showDeliveryPersonDialog, setShowDeliveryPersonDialog] = useState(false);
-  const [orderToAccept, setOrderToAccept] = useState<Order | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [updatingPaymentId, setUpdatingPaymentId] = useState<string | null>(null);
 
@@ -158,186 +155,98 @@ export default function VendorOrders() {
     return () => unsubscribe();
   }, [user?.id, vendor?.status]);
 
-  // Real-time listener: same city / area as shop (see subscribeToDeliveryPersonsForVendorArea)
-  useEffect(() => {
-    const hasArea =
-      vendor?.status === 'approved' &&
-      (!!cityKeyForMatching(vendor.city, vendor.address) || !!(vendor.pincode || '').toString().trim());
+  const validateStockForOrder = (order: Order): string | null => {
+    if (!vendor?.stock || !order.items?.length) return null;
+    for (const item of order.items) {
+      if (item.jarType === '20L') {
+        const currentStock = vendor.stock.jar20L || 0;
+        if (currentStock === 0) {
+          return 'Cannot assign delivery. You have 0 20L jars in stock. Please add stock from Inventory section.';
+        }
+        if (currentStock < item.quantity) {
+          return `Cannot assign delivery. You have only ${currentStock} 20L jar(s) in stock, but ${item.quantity} are required.`;
+        }
+      } else if (item.jarType === '10L') {
+        const currentStock = vendor.stock.jar10L || 0;
+        if (currentStock === 0) {
+          return 'Cannot assign delivery. You have 0 10L jars in stock. Please add stock from Inventory section.';
+        }
+        if (currentStock < item.quantity) {
+          return `Cannot assign delivery. You have only ${currentStock} 10L jar(s) in stock, but ${item.quantity} are required.`;
+        }
+      }
+    }
+    return null;
+  };
 
-    if (!hasArea || !vendor) {
-      setDeliveryPersons([]);
-      setLoadingDeliveryPersons(false);
+  const deductStockForOrder = async (order: Order) => {
+    if (!user?.id || !order.items?.length || !vendor?.stock) return;
+    let stockUpdateNeeded = false;
+    let updatedStock20L = vendor.stock.jar20L || 0;
+    let updatedStock10L = vendor.stock.jar10L || 0;
+
+    for (const item of order.items) {
+      if (item.jarType === '20L') {
+        updatedStock20L = Math.max(0, updatedStock20L - item.quantity);
+        stockUpdateNeeded = true;
+      } else if (item.jarType === '10L') {
+        updatedStock10L = Math.max(0, updatedStock10L - item.quantity);
+        stockUpdateNeeded = true;
+      }
+    }
+
+    if (stockUpdateNeeded) {
+      await updateVendorDocument(user.id, {
+        stock: { jar20L: updatedStock20L, jar10L: updatedStock10L },
+      });
+    }
+  };
+
+  const handleRequestDelivery = async (order: Order) => {
+    if (!order.id || !vendor) return;
+
+    const stockError = validateStockForOrder(order);
+    if (stockError) {
+      toast({ title: 'Insufficient Stock', description: stockError, variant: 'destructive' });
       return;
     }
 
     try {
-      setLoadingDeliveryPersons(true);
-      const unsubscribe = subscribeToDeliveryPersonsForVendorArea(
+      setUpdatingOrderId(order.id);
+      const jarCount = countJarsInOrder(order.items);
+      await requestDeliveryFromAdmin(
+        order.id,
         {
-          pincode: vendor.pincode,
-          city: vendor.city,
-          state: vendor.state,
           address: vendor.address,
+          phone: vendor.phone,
           latitude: vendor.latitude,
           longitude: vendor.longitude,
         },
-        (persons) => {
-          setDeliveryPersons(persons);
-          setLoadingDeliveryPersons(false);
-        },
-        false
+        jarCount
       );
+      await deductStockForOrder(order);
 
-      return () => {
-        unsubscribe();
-        setDeliveryPersons([]);
-      };
-    } catch (error: any) {
-      console.error('❌ Error setting up delivery persons listener:', error);
-      setLoadingDeliveryPersons(false);
-      setDeliveryPersons([]);
-    }
-  }, [
-    vendor?.pincode,
-    vendor?.city,
-    vendor?.state,
-    vendor?.address,
-    vendor?.latitude,
-    vendor?.longitude,
-    vendor?.status,
-  ]);
-
-  const handleOpenAssignDialog = (order: Order) => {
-    setOrderToAccept(order);
-    setShowDeliveryPersonDialog(true);
-  };
-
-  const handleAssignDeliveryPerson = async (deliveryPerson: FirestoreUser) => {
-    if (!orderToAccept?.id || !vendor) return;
-
-    if (deliveryPerson.isAvailable === false) {
       toast({
-        title: 'Cannot Assign',
-        description: 'This delivery person is currently unavailable. Please select an available delivery person.',
-        variant: 'destructive',
+        title: 'Delivery requested',
+        description: 'Admin will assign the nearest available driver.',
       });
-      return;
-    }
-
-    // Check stock availability before assigning delivery
-    if (orderToAccept.items && orderToAccept.items.length > 0) {
-      for (const item of orderToAccept.items) {
-        if (item.jarType === '20L') {
-          const currentStock = vendor.stock?.jar20L || 0;
-          if (currentStock === 0) {
-            toast({
-              title: 'Insufficient Stock',
-              description: 'Cannot assign delivery. You have 0 20L jars in stock. Please add stock from Inventory section.',
-              variant: 'destructive',
-            });
-            return;
-          }
-          if (currentStock < item.quantity) {
-            toast({
-              title: 'Insufficient Stock',
-              description: `Cannot assign delivery. You have only ${currentStock} 20L jar(s) in stock, but ${item.quantity} are required. Please add more stock.`,
-              variant: 'destructive',
-            });
-            return;
-          }
-        } else if (item.jarType === '10L') {
-          const currentStock = vendor.stock?.jar10L || 0;
-          if (currentStock === 0) {
-            toast({
-              title: 'Insufficient Stock',
-              description: 'Cannot assign delivery. You have 0 10L jars in stock. Please add stock from Inventory section.',
-              variant: 'destructive',
-            });
-            return;
-          }
-          if (currentStock < item.quantity) {
-            toast({
-              title: 'Insufficient Stock',
-              description: `Cannot assign delivery. You have only ${currentStock} 10L jar(s) in stock, but ${item.quantity} are required. Please add more stock.`,
-              variant: 'destructive',
-            });
-            return;
-          }
-        }
-      }
-    }
-
-    try {
-      setUpdatingOrderId(orderToAccept.id);
-      
-      const updateData = {
-        status: 'accepted' as const,
-        deliveryPersonUid: deliveryPerson.uid,
-        deliveryPersonName: deliveryPerson.name,
-        deliveryPersonPhone: deliveryPerson.phone,
-      };
-      
-      if (!orderToAccept.vendorAddress && vendor.address) {
-        (updateData as any).vendorAddress = vendor.address;
-      }
-      if (!orderToAccept.vendorPhone && vendor.phone) {
-        (updateData as any).vendorPhone = vendor.phone;
-      }
-      
-      await updateOrderDocument(orderToAccept.id, updateData);
-      
-      // Deduct stock immediately when order is accepted and assigned
-      if (orderToAccept.items && orderToAccept.items.length > 0 && vendor.stock) {
-        let stockUpdateNeeded = false;
-        const currentStock20L = vendor.stock.jar20L || 0;
-        const currentStock10L = vendor.stock.jar10L || 0;
-        let updatedStock20L = currentStock20L;
-        let updatedStock10L = currentStock10L;
-
-        for (const item of orderToAccept.items) {
-          if (item.jarType === '20L') {
-            updatedStock20L = Math.max(0, updatedStock20L - item.quantity);
-            stockUpdateNeeded = true;
-          } else if (item.jarType === '10L') {
-            updatedStock10L = Math.max(0, updatedStock10L - item.quantity);
-            stockUpdateNeeded = true;
-          }
-        }
-
-        if (stockUpdateNeeded) {
-          // Update stock in Firestore immediately
-          await updateVendorDocument(user.id, {
-            stock: {
-              jar20L: updatedStock20L,
-              jar10L: updatedStock10L,
-            },
-          });
-
-          console.log('✅ Stock deducted immediately after order acceptance:', {
-            orderId: orderToAccept.orderId,
-            items: orderToAccept.items,
-            previousStock: { jar20L: currentStock20L, jar10L: currentStock10L },
-            newStock: { jar20L: updatedStock20L, jar10L: updatedStock10L },
-          });
-        }
-      }
-      
-      setShowDeliveryPersonDialog(false);
-      setOrderToAccept(null);
-      
-      toast({
-        title: 'Order Accepted',
-        description: `Order assigned to ${deliveryPerson.name}. Stock has been deducted.`,
-      });
-    } catch (error: any) {
-      console.error('Error accepting order:', error);
-      toast({
-        title: 'Error',
-        description: error.message || 'Failed to accept order. Please try again.',
-        variant: 'destructive',
-      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to request delivery';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
     } finally {
       setUpdatingOrderId(null);
+    }
+  };
+
+  const getAssignmentStatusLabel = (order: Order): string | null => {
+    if (order.deliveryPersonUid) return null;
+    switch (order.assignmentStatus) {
+      case 'awaiting_admin':
+        return 'Waiting for admin to assign driver';
+      case 'admin_assigned':
+        return 'Driver assigned by admin';
+      default:
+        return null;
     }
   };
 
@@ -555,18 +464,26 @@ export default function VendorOrders() {
                               {statusLabel}
                             </span>
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <p className="text-2xl font-bold">₹{order.total}</p>
                             {(order.status === 'pending' || order.status === 'accepted') && !order.deliveryPersonUid && (
-                              <Button 
-                                size="sm" 
-                                className="gap-1"
-                                onClick={() => handleOpenAssignDialog(order)}
-                                disabled={updatingOrderId === order.id || !!updatingOrderId}
-                              >
-                                <UserPlus className="h-4 w-4" />
-                                Assign
-                              </Button>
+                              <>
+                                {order.assignmentStatus === 'awaiting_admin' ? (
+                                  <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary border border-primary/30">
+                                    {getAssignmentStatusLabel(order)}
+                                  </span>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    className="gap-1"
+                                    onClick={() => handleRequestDelivery(order)}
+                                    disabled={updatingOrderId === order.id || !!updatingOrderId}
+                                  >
+                                    <Send className="h-4 w-4" />
+                                    Request Delivery
+                                  </Button>
+                                )}
+                              </>
                             )}
                           </div>
                         </div>
@@ -709,32 +626,6 @@ export default function VendorOrders() {
           </TabsContent>
         </Tabs>
       </div>
-
-      <DriverAssignmentDialog
-        open={showDeliveryPersonDialog}
-        onOpenChange={(open) => {
-          setShowDeliveryPersonDialog(open);
-          if (!open) setOrderToAccept(null);
-        }}
-        title="Select Delivery Person for Order"
-        vendor={vendor}
-        deliveryPersons={deliveryPersons}
-        loading={loadingDeliveryPersons}
-        assigning={!!updatingOrderId}
-        showEta
-        summary={
-          orderToAccept ? (
-            <div className="space-y-1 text-sm">
-              <p className="font-semibold mb-2">Order Summary</p>
-              <p><span className="font-medium">Order ID:</span> {orderToAccept.orderId}</p>
-              <p><span className="font-medium">Customer:</span> {orderToAccept.customerName}</p>
-              <p><span className="font-medium">Items:</span> {formatOrderItems(orderToAccept)}</p>
-              <p><span className="font-medium">Total:</span> ₹{orderToAccept.total}</p>
-            </div>
-          ) : null
-        }
-        onAssign={handleAssignDeliveryPerson}
-      />
     </VendorLayout>
   );
 }

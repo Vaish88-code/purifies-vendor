@@ -41,6 +41,7 @@ import {
   formatAnalyticsReportText,
   CHART_COLORS,
 } from '@shared/utils/vendorAnalytics';
+import { summarizeVendorEarnings, getCommissionPercentForVolume } from '@shared/utils/platformFees';
 
 const revenueChartConfig = {
   quickOrders: { label: 'Quick Orders', color: CHART_COLORS.quickOrders },
@@ -204,6 +205,20 @@ export default function VendorEarnings() {
     [orders, subscriptions, subscriptionPayments]
   );
 
+  const payoutSummary = useMemo(() => {
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+    const monthlyDelivered = orders.filter(
+      (o) => o.status === 'delivered' && o.createdAt?.toDate?.() >= monthStart
+    ).length;
+    return summarizeVendorEarnings(orders, monthlyDelivered);
+  }, [orders]);
+
+  const currentCommissionRate = getCommissionPercentForVolume(
+    orders.filter((o) => o.status === 'delivered').length
+  );
+
   const handleDownloadReport = () => {
     const text = formatAnalyticsReportText(report, shopName || user?.name);
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
@@ -274,8 +289,8 @@ export default function VendorEarnings() {
           {[
             { label: 'Today', value: report.earnings.today, icon: IndianRupee, gradient: 'from-success/20 to-success/5', iconBg: 'bg-success/20', iconColor: 'text-success' },
             { label: 'This Week', value: report.earnings.thisWeek, icon: TrendingUp, gradient: 'from-primary/20 to-primary/5', iconBg: 'bg-primary/20', iconColor: 'text-primary' },
-            { label: 'This Month', value: report.earnings.thisMonth, icon: Calendar, gradient: 'from-secondary/20 to-secondary/5', iconBg: 'bg-secondary/20', iconColor: 'text-secondary' },
-            { label: 'Pending', value: report.earnings.pending, icon: Clock, gradient: 'from-warning/20 to-warning/5', iconBg: 'bg-warning/20', iconColor: 'text-warning' },
+            { label: 'This Month', value: report.earnings.thisMonth, icon: Calendar, gradient: 'from-warning/20 to-warning/5', iconBg: 'bg-warning/20', iconColor: 'text-warning' },
+            { label: 'Pending', value: report.earnings.pending, icon: Clock, gradient: 'from-destructive/20 to-destructive/5', iconBg: 'bg-destructive/20', iconColor: 'text-destructive' },
           ].map((stat) => (
             <Card key={stat.label} className={`card-shadow border-0 bg-gradient-to-br ${stat.gradient}`}>
               <CardContent className="p-5">
@@ -288,6 +303,43 @@ export default function VendorEarnings() {
             </Card>
           ))}
         </div>
+
+        {/* Commission & net payout breakdown */}
+        <Card className="card-shadow border-primary/20 bg-gradient-to-br from-primary/5 to-background">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <IndianRupee className="h-5 w-5 text-primary" />
+              Payout Breakdown
+            </CardTitle>
+            <CardDescription>
+              Transparent fees — your commission rate is {currentCommissionRate}% (lower at higher volume).
+              Net earnings = sales − platform commission.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid sm:grid-cols-3 gap-4">
+              <div className="rounded-xl border bg-card p-4">
+                <p className="text-sm text-muted-foreground">Gross Sales</p>
+                <p className="text-2xl font-bold tabular-nums">₹{payoutSummary.grossSales.toLocaleString()}</p>
+                <p className="text-xs text-muted-foreground mt-1">{payoutSummary.orderCount} delivered orders</p>
+              </div>
+              <div className="rounded-xl border bg-card p-4">
+                <p className="text-sm text-muted-foreground">Platform Fees ({currentCommissionRate}%)</p>
+                <p className="text-2xl font-bold tabular-nums text-destructive">
+                  −₹{payoutSummary.platformCommission.toLocaleString()}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">Commission on product sales</p>
+              </div>
+              <div className="rounded-xl border bg-card p-4 ring-2 ring-success/30">
+                <p className="text-sm text-muted-foreground">You Earned (Net)</p>
+                <p className="text-2xl font-bold tabular-nums text-success">
+                  ₹{payoutSummary.netVendorEarnings.toLocaleString()}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">Paid via UPI at checkout (minus commission)</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Customer & order summary */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

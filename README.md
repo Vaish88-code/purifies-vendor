@@ -13,12 +13,13 @@ npm run dev
 
 ## Scripts
 
-- `npm run dev` — local dev server (port 3002)
-- `npm run build` — production build
-- `npm run preview` — preview production build
+- `npm run dev` ï¿½ local dev server (port 3002)
+- `npm run build` ï¿½ production build
+- `npm run preview` ï¿½ preview production build
 
 ## Deploy (Netlify)
 
 - **Build command:** `npm run build`
 - **Publish directory:** `dist`
 - Add Firebase `VITE_*` environment variables in Netlify site settings.
+

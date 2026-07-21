@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Eye, EyeOff, Phone, Lock } from 'lucide-react';
 import { Button } from '@shared/components/ui/button';
 import { Input } from '@shared/components/ui/input';
@@ -51,7 +51,7 @@ export default function Login() {
           title: 'Login successful!',
           description: 'Redirecting to vendor dashboard...',
         });
-        setTimeout(() => navigate('/'), 500);
+        setTimeout(() => navigate('/dashboard'), 500);
       } else {
         toast({
           title: 'Login failed',
@@ -137,6 +137,13 @@ export default function Login() {
               >
                 {isLoading ? 'Logging in...' : t('login')}
               </Button>
+
+              <p className="text-center text-sm text-muted-foreground">
+                {t('newUser')}{' '}
+                <Link to="/register" className="text-primary font-medium hover:underline">
+                  {t('register')}
+                </Link>
+              </p>
             </form>
           </CardContent>
         </Card>

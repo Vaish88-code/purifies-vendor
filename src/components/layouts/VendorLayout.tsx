@@ -41,7 +41,7 @@ interface VendorLayoutProps {
 }
 
 const navItems = [
-  { path: '/', icon: Home, labelKey: 'dashboard' as const, badgeKey: null as null, shortLabel: 'Home' },
+  { path: '/dashboard', icon: Home, labelKey: 'dashboard' as const, badgeKey: null as null, shortLabel: 'Home' },
   { path: '/orders', icon: Package, labelKey: 'orders' as const, badgeKey: 'orders' as const, shortLabel: 'Orders' },
   {
     path: '/subscription-requests',
@@ -77,7 +77,7 @@ function navBadgeCount(
 }
 
 function isNavActive(pathname: string, path: string): boolean {
-  if (path === '/') return pathname === '/';
+  if (path === '/dashboard') return pathname === '/dashboard';
   return pathname === path || pathname.startsWith(`${path}/`);
 }
 
@@ -241,7 +241,7 @@ export function VendorLayout({ children }: VendorLayoutProps) {
               </SheetContent>
             </Sheet>
 
-            <Link to="/vendor" className="flex items-center gap-2.5 min-w-0 group">
+            <Link to="/dashboard" className="flex items-center gap-2.5 min-w-0 group">
               <div className="lg:hidden shrink-0">
                 <Logo size="sm" showText={false} />
               </div>

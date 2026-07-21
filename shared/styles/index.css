@@ -110,6 +110,34 @@
 }
 
 @layer utilities {
+  .leaflet-routing-alt {
+    max-height: 250px !important;
+    overflow-y: auto !important;
+    border-radius: 0.5rem !important;
+    background-color: hsl(var(--card)) !important;
+    color: hsl(var(--card-foreground)) !important;
+  }
+
+  /* Hide Google Translate top banner & iframe */
+  .skiptranslate iframe,
+  .goog-te-banner-frame {
+    display: none !important;
+  }
+  body {
+    top: 0px !important;
+  }
+  .goog-tooltip {
+    display: none !important;
+  }
+  .goog-tooltip:hover {
+    display: none !important;
+  }
+  .goog-text-highlight {
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
   .water-gradient {
     background: var(--water-gradient);
   }

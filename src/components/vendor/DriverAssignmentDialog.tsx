@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { Truck, MapPin, Phone, User, Navigation } from 'lucide-react';
+import { Truck, MapPin, Phone, User, Navigation, Sparkles } from 'lucide-react';
 import { Button } from '@shared/components/ui/button';
 import { Card, CardContent } from '@shared/components/ui/card';
 import {
@@ -26,6 +26,7 @@ interface DriverAssignmentDialogProps {
   loading: boolean;
   summary: ReactNode;
   onAssign: (person: FirestoreUser) => void;
+  onAutoAssign?: () => void;
   assigning?: boolean;
   showEta?: boolean;
 }
@@ -40,6 +41,7 @@ export function DriverAssignmentDialog({
   loading,
   summary,
   onAssign,
+  onAutoAssign,
   assigning = false,
   showEta = false,
 }: DriverAssignmentDialogProps) {
@@ -179,8 +181,19 @@ export function DriverAssignmentDialog({
                   );
                 })}
               </div>
-              <div className="flex justify-end pt-4 border-t">
-                <Button variant="outline" onClick={() => onOpenChange(false)} disabled={assigning}>
+              <div className="flex justify-between items-center pt-4 border-t gap-2 flex-wrap">
+                {onAutoAssign && (
+                  <Button
+                    variant="secondary"
+                    className="gap-2"
+                    onClick={onAutoAssign}
+                    disabled={assigning}
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    Auto-assign best driver
+                  </Button>
+                )}
+                <Button variant="outline" onClick={() => onOpenChange(false)} disabled={assigning} className="ml-auto">
                   Cancel
                 </Button>
               </div>

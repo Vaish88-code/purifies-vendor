@@ -495,11 +495,11 @@ export default function VendorDashboard() {
           </Link>
 
           <Link to="/orders?tab=pending" className="group block">
-            <Card className="relative overflow-hidden border-0 h-full card-shadow hover:card-shadow-hover transition-all duration-300 group-hover:-translate-y-1 bg-gradient-to-br from-warning/20 via-warning/5 to-background">
+            <Card className="relative overflow-hidden border-0 h-full card-shadow hover:card-shadow-hover transition-all duration-300 group-hover:-translate-y-1 bg-gradient-to-br from-destructive/20 via-destructive/5 to-background">
               <CardContent className="p-5 sm:p-6">
                 <div className="flex items-start justify-between">
-                  <div className="p-2.5 rounded-xl bg-warning/20">
-                    <Clock className="h-5 w-5 text-warning" />
+                  <div className="p-2.5 rounded-xl bg-destructive/20">
+                    <Clock className="h-5 w-5 text-destructive" />
                   </div>
                   <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                 </div>
@@ -525,11 +525,11 @@ export default function VendorDashboard() {
           </Link>
 
           <Link to="/orders?tab=delivered" className="group block">
-            <Card className="relative overflow-hidden border-0 h-full card-shadow hover:card-shadow-hover transition-all duration-300 group-hover:-translate-y-1 bg-gradient-to-br from-secondary/20 via-secondary/5 to-background">
+            <Card className="relative overflow-hidden border-0 h-full card-shadow hover:card-shadow-hover transition-all duration-300 group-hover:-translate-y-1 bg-gradient-to-br from-warning/20 via-warning/5 to-background">
               <CardContent className="p-5 sm:p-6">
                 <div className="flex items-start justify-between">
-                  <div className="p-2.5 rounded-xl bg-secondary/20">
-                    <CheckCircle className="h-5 w-5 text-secondary" />
+                  <div className="p-2.5 rounded-xl bg-warning/20">
+                    <CheckCircle className="h-5 w-5 text-warning" />
                   </div>
                   <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                 </div>

@@ -38,7 +38,10 @@ interface AuthContextType {
     address: string,
     pincode: string,
     state: string,
-    shopName?: string
+    shopName?: string,
+    latitude?: number,
+    longitude?: number,
+    city?: string
   ) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   switchRole: (role: UserRole) => void;
@@ -531,7 +534,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     address: string,
     pincode: string,
     state: string,
-    shopName?: string
+    shopName?: string,
+    latitude?: number,
+    longitude?: number,
+    city?: string
   ): Promise<{ success: boolean; error?: string }> => {
     try {
       console.log('📝 Starting registration process...');
@@ -551,6 +557,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             address,
             pincode,
             state,
+            ...(city ? { city } : {}),
+            ...(latitude != null && longitude != null ? { latitude, longitude } : {}),
           });
           console.log('✅ User document created in Firestore');
 
@@ -565,6 +573,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               state,
               pincode,
               status: 'pending',
+              ...(city ? { city } : {}),
+              ...(latitude != null && longitude != null ? { latitude, longitude } : {}),
             });
             console.log('✅ Vendor document created in Firestore');
           }
@@ -580,6 +590,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             address: address || undefined,
             pincode: pincode || undefined,
             state: state || undefined,
+            city: city || undefined,
           });
           setLanguage(lang);
           return { success: true };

@@ -54,18 +54,18 @@ export interface VendorAnalyticsReport {
 }
 
 const CHART_COLORS = {
-  quickOrders: 'hsl(201 90% 42%)',
-  subscriptions: 'hsl(192 91% 38%)',
+  quickOrders: 'hsl(201 90% 32%)',
+  subscriptions: 'hsl(142 71% 45%)',
   pending: 'hsl(38 92% 50%)',
-  quickOnly: 'hsl(201 90% 42%)',
-  subscriptionOnly: 'hsl(142 71% 45%)',
-  both: 'hsl(262 83% 58%)',
-  today: 'hsl(24 95% 53%)',
-  schedule: 'hsl(201 90% 42%)',
-  subscriptionDelivery: 'hsl(142 71% 45%)',
-  jar20L: 'hsl(201 90% 42%)',
-  jar10L: 'hsl(192 91% 38%)',
-  bottles: 'hsl(142 71% 45%)',
+  quickOnly: 'hsl(38 92% 50%)',
+  subscriptionOnly: 'hsl(0 84% 60%)',
+  both: 'hsl(142 71% 45%)',
+  today: 'hsl(142 71% 45%)',
+  schedule: 'hsl(0 84% 60%)',
+  subscriptionDelivery: 'hsl(201 90% 32%)',
+  jar20L: 'hsl(0 84% 60%)',
+  jar10L: 'hsl(38 92% 50%)',
+  bottles: 'hsl(201 90% 32%)',
 };
 
 function sumDeliveredRevenue(list: Order[]): number {

@@ -1,6 +1,8 @@
 import { createRoot } from "react-dom/client";
 import { FirebaseConfigMissing, getMissingFirebaseEnvKeys } from "@shared/components/FirebaseConfigMissing";
 import "@shared/styles/index.css";
+import "leaflet/dist/leaflet.css";
+import "@shared/lib/leaflet/setup";
 
 const missingFirebaseKeys = getMissingFirebaseEnvKeys();
 
