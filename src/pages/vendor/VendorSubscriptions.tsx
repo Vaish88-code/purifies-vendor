@@ -56,6 +56,7 @@ import {
   subscribeToDeliveryPersonsForVendorArea,
   subscribeToOrdersByVendor,
   subscribeToSubscriptionPaymentsByVendor,
+  requestDeliveryFromAdmin,
   Subscription,
   SubscriptionPayment,
   Vendor,
@@ -320,54 +321,37 @@ export default function VendorSubscriptions() {
     setShowSubscriptionDeliveryDialog(true);
   };
 
-  const handleAssignDeliveryPersonForSubscription = async (deliveryPerson: FirestoreUser) => {
+  const handleRequestAdminDelivery = async () => {
     if (!user?.id || !vendor) return;
 
-    if (deliveryPerson.isAvailable === false) {
-      toast({
-        title: 'Cannot Assign',
-        description: 'This delivery person is currently unavailable. Please select an available delivery person.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    const subscriptionsToProcess = isBulkDelivery ? subscriptionsToDeliver : 
+    const subscriptionsToProcess = isBulkDelivery ? subscriptionsToDeliver :
       (subscriptionToDeliver ? [subscriptionToDeliver] : []);
 
     if (subscriptionsToProcess.length === 0) return;
 
-    // Check stock availability for all subscriptions
+    // Check stock availability
     let totalRequired20L = 0;
     let totalRequired10L = 0;
-
     for (const subscription of subscriptionsToProcess) {
-      const requiredQuantity = subscription.quantity;
-      
-      if (subscription.jarType === 'jar20L') {
-        totalRequired20L += requiredQuantity;
-      } else if (subscription.jarType === 'jar10L') {
-        totalRequired10L += requiredQuantity;
-      }
+      if (subscription.jarType === 'jar20L') totalRequired20L += subscription.quantity;
+      else if (subscription.jarType === 'jar10L') totalRequired10L += subscription.quantity;
     }
 
-    // Check stock
     const currentStock20L = vendor.stock?.jar20L || 0;
     const currentStock10L = vendor.stock?.jar10L || 0;
 
     if (totalRequired20L > 0 && currentStock20L < totalRequired20L) {
       toast({
         title: 'Insufficient Stock',
-        description: `Cannot assign delivery. You have only ${currentStock20L} 20L jar(s) in stock, but ${totalRequired20L} are required.`,
+        description: `Only ${currentStock20L} 20L jar(s) in stock, but ${totalRequired20L} required.`,
         variant: 'destructive',
       });
       return;
     }
-
     if (totalRequired10L > 0 && currentStock10L < totalRequired10L) {
       toast({
         title: 'Insufficient Stock',
-        description: `Cannot assign delivery. You have only ${currentStock10L} 10L jar(s) in stock, but ${totalRequired10L} are required.`,
+        description: `Only ${currentStock10L} 10L jar(s) in stock, but ${totalRequired10L} required.`,
         variant: 'destructive',
       });
       return;
@@ -384,7 +368,6 @@ export default function VendorSubscriptions() {
       const shopAddress = vendor?.address || '';
       const shopPhone = vendor?.phone || '';
 
-      // Create orders for all subscriptions
       const createdOrders: string[] = [];
       let updatedStock20L = currentStock20L;
       let updatedStock10L = currentStock10L;
@@ -392,9 +375,9 @@ export default function VendorSubscriptions() {
       for (const subscription of subscriptionsToProcess) {
         if (!subscription.id) continue;
 
-        const jarTypeForOrder = subscription.jarType === 'jar20L' ? '20L' : 
+        const jarTypeForOrder = subscription.jarType === 'jar20L' ? '20L' :
           subscription.jarType === 'jar10L' ? '10L' : 'bottles';
-        
+
         const orderData: Omit<Order, 'id' | 'orderId' | 'createdAt' | 'updatedAt'> = {
           customerUid: subscription.customerUid,
           customerName: subscription.customerName,
@@ -405,9 +388,8 @@ export default function VendorSubscriptions() {
           vendorShopName: shopName,
           vendorAddress: shopAddress,
           vendorPhone: shopPhone,
-          deliveryPersonUid: deliveryPerson.uid,
-          deliveryPersonName: deliveryPerson.name,
-          deliveryPersonPhone: deliveryPerson.phone,
+          vendorLatitude: vendor.latitude,
+          vendorLongitude: vendor.longitude,
           items: [{
             jarType: jarTypeForOrder as '20L' | '10L' | 'bottles',
             quantity: subscription.quantity,
@@ -419,9 +401,24 @@ export default function VendorSubscriptions() {
           deliveryType: 'subscription',
           subscriptionId: subscription.id,
           status: 'accepted',
+          assignmentStatus: 'awaiting_admin',
+          autoAssignDriver: false,
         };
 
-        const { docId, orderId } = await createOrderDocument(orderData);
+        const { docId } = await createOrderDocument(orderData);
+
+        // Notify admin via requestDeliveryFromAdmin
+        await requestDeliveryFromAdmin(
+          docId,
+          {
+            address: shopAddress,
+            phone: shopPhone,
+            latitude: vendor.latitude,
+            longitude: vendor.longitude,
+          },
+          subscription.quantity
+        );
+
         createdOrders.push(subscription.customerName);
 
         // Deduct stock
@@ -431,7 +428,7 @@ export default function VendorSubscriptions() {
           updatedStock10L = Math.max(0, updatedStock10L - subscription.quantity);
         }
 
-        // Advance next delivery based on customer's selected weekdays
+        // Advance next delivery date
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         await updateSubscriptionDocument(subscription.id, {
@@ -439,7 +436,7 @@ export default function VendorSubscriptions() {
         });
       }
 
-      // Update stock once for all orders
+      // Update stock
       if (totalRequired20L > 0 || totalRequired10L > 0) {
         await updateVendorDocument(user.id, {
           stock: {
@@ -450,28 +447,26 @@ export default function VendorSubscriptions() {
         });
       }
 
-      // Refresh subscriptions list
       const updatedSubscriptions = await getSubscriptionsByVendor(user.id);
       setSubscriptions(updatedSubscriptions);
 
-      // Clear selections
       setSelectedSubscriptionIds(new Set());
       setShowSubscriptionDeliveryDialog(false);
       setSubscriptionToDeliver(null);
       setSubscriptionsToDeliver([]);
       setIsBulkDelivery(false);
-      
+
       toast({
-        title: isBulkDelivery ? 'Bulk Delivery Scheduled' : 'Delivery Scheduled',
-        description: isBulkDelivery 
-          ? `${createdOrders.length} orders created and assigned to ${deliveryPerson.name}. Stock has been deducted.`
-          : `Order created and assigned to ${deliveryPerson.name}. Stock has been deducted.`,
+        title: isBulkDelivery ? 'Delivery Requested' : 'Delivery Requested',
+        description: isBulkDelivery
+          ? `${createdOrders.length} subscription order(s) sent to admin for driver assignment.`
+          : `Subscription order sent to admin. Driver will be assigned shortly.`,
       });
     } catch (error: any) {
-      console.error('Error creating subscription delivery:', error);
+      console.error('Error requesting admin delivery for subscription:', error);
       toast({
         title: 'Error',
-        description: error.message || 'Failed to create delivery. Please try again.',
+        description: error.message || 'Failed to request delivery. Please try again.',
         variant: 'destructive',
       });
     } finally {
@@ -930,274 +925,71 @@ export default function VendorSubscriptions() {
 
         {/* Subscription Delivery Dialog */}
         <Dialog open={showSubscriptionDeliveryDialog} onOpenChange={setShowSubscriptionDeliveryDialog}>
-          <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>
-                {isBulkDelivery ? 'Bulk Deliver Subscription Orders' : 'Deliver Subscription Order'}
+                {isBulkDelivery ? `Request Delivery for ${subscriptionsToDeliver.length} Subscriptions` : 'Request Subscription Delivery'}
               </DialogTitle>
               <DialogDescription>
-                {isBulkDelivery 
-                  ? `Choose an available delivery person to assign for ${subscriptionsToDeliver.length} subscription deliveries.`
-                  : 'Choose an available delivery person to assign for this subscription delivery.'}{' '}
-                Distance from your shop is in kilometers when GPS is set. Unavailable drivers cannot be assigned.
+                This will send the delivery request to the admin, who will assign an available driver — same as a quick order.
               </DialogDescription>
             </DialogHeader>
-            
-            <div className="space-y-4 mt-4">
-              {/* Pickup Location (Shop) */}
+
+            <div className="space-y-3 mt-2">
+              {/* Shop info */}
               <Card className="bg-primary/5 border-primary/20">
                 <CardContent className="p-4">
-                  <p className="font-semibold text-sm mb-3 flex items-center gap-2">
+                  <p className="font-semibold text-sm mb-2 flex items-center gap-2">
                     <Store className="h-4 w-4 text-primary" />
-                    Pickup From (Your Shop):
+                    Pickup From: {vendor?.shopName}
                   </p>
-                  <div className="space-y-2 text-sm">
-                    <div>
-                      <p className="text-muted-foreground">Shop Name:</p>
-                      <p className="font-semibold">{vendor?.shopName || 'Shop'}</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Shop Address:</p>
-                      <p className="font-medium">{vendor?.address || 'N/A'}</p>
-                      {vendor?.pincode && (
-                        <p className="text-xs text-muted-foreground mt-1">Pincode: {vendor.pincode}</p>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Shop Phone:</p>
-                      <p className="font-medium">{vendor?.phone || 'N/A'}</p>
-                    </div>
-                  </div>
+                  <p className="text-sm text-muted-foreground">{vendor?.address}</p>
                 </CardContent>
               </Card>
 
-              {/* Delivery Locations (All Customers) */}
-              <Card className="bg-success/5 border-success/20">
+              {/* Customers */}
+              <Card className="bg-emerald-500/5 border-emerald-500/20">
                 <CardContent className="p-4">
-                  <p className="font-semibold text-sm mb-3 flex items-center gap-2">
-                    <MapPin className="h-4 w-4 text-success" />
-                    Deliver To ({isBulkDelivery ? `${subscriptionsToDeliver.length} Customers` : 'Customer'}):
+                  <p className="font-semibold text-sm mb-2 flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-emerald-600" />
+                    Deliver To ({isBulkDelivery ? `${subscriptionsToDeliver.length} Customers` : '1 Customer'}):
                   </p>
-                  <div className="space-y-4 max-h-[300px] overflow-y-auto">
-                    {isBulkDelivery ? (
-                      subscriptionsToDeliver.map((subscription, index) => (
-                        <div key={subscription.id || index} className="p-3 rounded-lg bg-background border border-success/20">
-                          <div className="space-y-2 text-sm">
-                            <div>
-                              <p className="text-muted-foreground">Customer Name:</p>
-                              <p className="font-semibold">{subscription.customerName}</p>
-                            </div>
-                            <div>
-                              <p className="text-muted-foreground">Delivery Address:</p>
-                              <p className="font-medium">{subscription.customerAddress}</p>
-                              {subscription.customerPincode && (
-                                <p className="text-xs text-muted-foreground mt-1">Pincode: {subscription.customerPincode}</p>
-                              )}
-                            </div>
-                            <div>
-                              <p className="text-muted-foreground">Customer Phone:</p>
-                              <p className="font-medium">{subscription.customerPhone}</p>
-                            </div>
-                            <div className="pt-2 border-t">
-                              <p className="text-muted-foreground">Items:</p>
-                              <p className="font-semibold">
-                                {subscription.quantity}x {subscription.jarType === 'jar20L' ? '20L Jar' : subscription.jarType === 'jar10L' ? '10L Jar' : 'Bottles'}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    ) : subscriptionToDeliver ? (
-                      <div className="p-3 rounded-lg bg-background border border-success/20">
-                        <div className="space-y-2 text-sm">
-                          <div>
-                            <p className="text-muted-foreground">Customer Name:</p>
-                            <p className="font-semibold">{subscriptionToDeliver.customerName}</p>
-                          </div>
-                          <div>
-                            <p className="text-muted-foreground">Delivery Address:</p>
-                            <p className="font-medium">{subscriptionToDeliver.customerAddress}</p>
-                            {subscriptionToDeliver.customerPincode && (
-                              <p className="text-xs text-muted-foreground mt-1">Pincode: {subscriptionToDeliver.customerPincode}</p>
-                            )}
-                          </div>
-                          <div>
-                            <p className="text-muted-foreground">Customer Phone:</p>
-                            <p className="font-medium">{subscriptionToDeliver.customerPhone}</p>
-                          </div>
-                          <div className="pt-2 border-t">
-                            <p className="text-muted-foreground">Items:</p>
-                            <p className="font-semibold">
-                              {subscriptionToDeliver.quantity}x {subscriptionToDeliver.jarType === 'jar20L' ? '20L Jar' : subscriptionToDeliver.jarType === 'jar10L' ? '10L Jar' : 'Bottles'}
-                            </p>
-                          </div>
-                        </div>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {(isBulkDelivery ? subscriptionsToDeliver : subscriptionToDeliver ? [subscriptionToDeliver] : []).map((sub, i) => (
+                      <div key={sub.id || i} className="text-sm p-2 rounded bg-background border">
+                        <p className="font-medium">{sub.customerName}</p>
+                        <p className="text-muted-foreground text-xs">{sub.customerAddress}</p>
+                        <p className="text-xs mt-0.5">{sub.quantity}x {sub.jarType === 'jar20L' ? '20L Jar' : sub.jarType === 'jar10L' ? '10L Jar' : 'Bottles'}</p>
                       </div>
-                    ) : null}
+                    ))}
                   </div>
                 </CardContent>
               </Card>
-            </div>
-            
-            <div className="space-y-4 mt-4">
-              {loadingDeliveryPersons ? (
-                <p className="text-center text-muted-foreground py-4">Loading delivery persons...</p>
-              ) : deliveryPersons.length === 0 ? (
-                <div className="text-center py-8">
-                  <Truck className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <p className="text-muted-foreground mb-2">No delivery persons available</p>
-                  <p className="text-sm text-muted-foreground">
-                    Same-city drivers appear here. Shop city:{' '}
-                    {(vendor?.city || deriveCityTokenFromAddress(vendor?.address) || '').trim() ||
-                      'not set — add in Shop Settings'}
-                    {vendor?.pincode ? ` · Pincode: ${vendor.pincode}` : ''}.
-                  </p>
-                  <Button
-                    variant="outline"
-                    className="mt-4"
-                    onClick={() => {
-                      setShowSubscriptionDeliveryDialog(false);
-                      setSubscriptionToDeliver(null);
-                      setSubscriptionsToDeliver([]);
-                      setIsBulkDelivery(false);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
-                    <span>
-                      {deliveryPersons.filter((p) => p.isAvailable !== false).length} available ·{' '}
-                      {deliveryPersons.length} total (unavailable shown but cannot be assigned)
-                    </span>
-                  </div>
-                  <div className="grid gap-3 max-h-[300px] overflow-y-auto">
-                    {deliveryPersons.map((person) => {
-                      const isAvailable = person.isAvailable !== false;
-                      const distM = distanceMetersShopToPerson(
-                        vendor?.latitude,
-                        vendor?.longitude,
-                        person.latitude,
-                        person.longitude
-                      );
-                      let etaLabel: string | null = null;
-                      if (distM != null) {
-                        const distanceKm = distM / 1000;
-                        const speedKmph = 20;
-                        const etaMinutes = Math.max(3, Math.round((distanceKm / speedKmph) * 60));
-                        etaLabel = `~${etaMinutes} min to reach shop`;
-                      }
 
-                      return (
-                        <div
-                          key={person.uid}
-                          className={`p-4 rounded-xl border-2 text-left transition-all ${
-                            isAvailable && !deliveringSubscriptionId
-                              ? 'border-border hover:border-primary bg-muted/30 hover:bg-muted cursor-pointer'
-                              : 'border-muted-foreground/30 bg-muted/30 opacity-60 cursor-not-allowed'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-2">
-                                <UserIcon className="h-4 w-4 text-primary" />
-                                <p className="font-semibold">{person.name}</p>
-                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                                  isAvailable
-                                    ? 'bg-success/20 text-success'
-                                    : 'bg-muted-foreground/20 text-muted-foreground'
-                                }`}>
-                                  {isAvailable ? '✓ Available' : '✗ Unavailable'}
-                                </span>
-                              </div>
-                              <div className="mt-1 flex items-center gap-2 text-sm">
-                                <Navigation className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-                                <span>
-                                  <span className="text-muted-foreground">Distance from shop:</span>{' '}
-                                  {distM != null ? (
-                                    <span className="font-semibold tabular-nums text-foreground">
-                                      {formatKmNumber(distM)} km
-                                    </span>
-                                  ) : (
-                                    <span className="text-muted-foreground text-xs">
-                                      not available — set shop GPS and driver location
-                                      {person.pincode && vendor?.pincode
-                                        ? person.pincode === vendor.pincode
-                                          ? ' · same pincode'
-                                          : ' · different pincode'
-                                        : ''}
-                                    </span>
-                                  )}
-                                </span>
-                              </div>
-                              {etaLabel && (
-                                <p className="mt-1 text-xs text-muted-foreground">{etaLabel}</p>
-                              )}
-                              <div className="space-y-1 text-sm text-muted-foreground mt-2">
-                                <div className="flex items-center gap-1">
-                                  <Phone className="h-3 w-3" />
-                                  <span>{person.phone}</span>
-                                </div>
-                                {person.address && (
-                                  <div className="flex items-start gap-1">
-                                    <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
-                                    <span>{person.address}</span>
-                                  </div>
-                                )}
-                                {person.pincode && (
-                                  <div className="text-xs">Pincode: {person.pincode}</div>
-                                )}
-                              </div>
-                              {!isAvailable && (
-                                <div className="mt-2 pt-2 border-t border-muted-foreground/20">
-                                  <p className="text-xs text-muted-foreground italic">
-                                    Currently unavailable - cannot be assigned
-                                  </p>
-                                </div>
-                              )}
-                            </div>
-                            {deliveringSubscriptionId ? (
-                              <div className="text-sm text-muted-foreground shrink-0">Assigning...</div>
-                            ) : isAvailable ? (
-                              <Button 
-                                size="sm" 
-                                className="shrink-0"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleAssignDeliveryPersonForSubscription(person);
-                                }}
-                                disabled={!!deliveringSubscriptionId}
-                              >
-                                Assign
-                              </Button>
-                            ) : (
-                              <div className="text-xs text-muted-foreground shrink-0 px-2 py-1">
-                                Unavailable
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="flex justify-end pt-4 border-t">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setShowSubscriptionDeliveryDialog(false);
-                        setSubscriptionToDeliver(null);
-                        setSubscriptionsToDeliver([]);
-                        setIsBulkDelivery(false);
-                      }}
-                      disabled={!!deliveringSubscriptionId}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </>
-              )}
+              <div className="text-xs text-muted-foreground bg-amber-50 border border-amber-200 rounded p-3">
+                <strong>📦 Subscription Order</strong> — Admin will see this tagged as a Subscription in their delivery requests panel and assign a driver.
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowSubscriptionDeliveryDialog(false);
+                  setSubscriptionToDeliver(null);
+                  setSubscriptionsToDeliver([]);
+                  setIsBulkDelivery(false);
+                }}
+                disabled={!!deliveringSubscriptionId}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleRequestAdminDelivery}
+                disabled={!!deliveringSubscriptionId}
+              >
+                {deliveringSubscriptionId ? 'Requesting...' : 'Request Delivery'}
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
